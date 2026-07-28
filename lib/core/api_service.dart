@@ -10,6 +10,7 @@ class ApiService {
 
   final http.Client _client = http.Client();
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  String? _sessionToken;
 
   String get baseUrl => AppConstants.baseUrl;
 
@@ -18,21 +19,30 @@ class ApiService {
   // ============================================================
   Future<Map<String, dynamic>> login(String username, String password) async {
     try {
+      // tRPC v11 format: body must be {"json": {...}}
       final response = await _client.post(
         Uri.parse('$baseUrl/api/trpc/auth.login'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'username': username, 'password': password}),
+        body: jsonEncode({'json': {'username': username, 'password': password}}),
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        // Salvar token/session
-        await _storage.write(key: 'session', value: response.body);
-        return data;
+        // Extract result from tRPC response format: {"result":{"data":{"json":...}}}
+        final result = data['result']?['data']?['json'] ?? data['result']?['data'] ?? data;
+        // Save session token
+        await _storage.write(key: 'session', value: jsonEncode(result));
+        _sessionToken = jsonEncode(result);
+        return result as Map<String, dynamic>;
+      } else if (response.statusCode == 401) {
+        final body = jsonDecode(response.body);
+        final msg = body['error']?['json']?['message'] ?? 'Usuário ou senha inválidos';
+        throw Exception(msg);
       } else {
         throw Exception('Falha no login: ${response.statusCode}');
       }
     } catch (e) {
+      if (e is Exception) rethrow;
       throw Exception('Erro de conexão: $e');
     }
   }
@@ -42,6 +52,7 @@ class ApiService {
       Uri.parse('$baseUrl/api/trpc/auth.logout'),
       headers: _authHeaders,
     );
+    _sessionToken = null;
     await _storage.deleteAll();
   }
 
@@ -52,12 +63,40 @@ class ApiService {
         headers: _authHeaders,
       );
       if (response.statusCode == 200) {
-        return jsonDecode(response.body);
+        final data = jsonDecode(response.body);
+        final result = data['result']?['data']?['json'] ?? data['result']?['data'] ?? data;
+        if (result != null) {
+          return result as Map<String, dynamic>;
+        }
       }
       return null;
     } catch (e) {
       return null;
     }
+  }
+
+  // ============================================================
+  // Helpers para extrair dados do formato tRPC
+  // ============================================================
+  Map<String, dynamic>? _extractResult(dynamic response) {
+    if (response is Map<String, dynamic>) {
+      return response['result']?['data']?['json'] ?? 
+             response['result']?['data'] ?? response;
+    }
+    return null;
+  }
+
+  List<Map<String, dynamic>> _extractList(dynamic response) {
+    if (response is List) {
+      return List<Map<String, dynamic>>.from(response);
+    }
+    if (response is Map<String, dynamic>) {
+      final result = response['result']?['data']?['json'];
+      if (result is List) {
+        return List<Map<String, dynamic>>.from(result);
+      }
+    }
+    return [];
   }
 
   // ============================================================
@@ -69,7 +108,8 @@ class ApiService {
       headers: _authHeaders,
     );
     if (response.statusCode == 200) {
-      return List<Map<String, dynamic>>.from(jsonDecode(response.body));
+      final data = jsonDecode(response.body);
+      return _extractList(data);
     }
     return [];
   }
@@ -77,25 +117,36 @@ class ApiService {
   Future<Map<String, dynamic>> createVehicle(Map<String, dynamic> data) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/api/trpc/vehicles.create'),
-      headers: {'Content-Type': 'application/json', ..._authHeaders},
-      body: jsonEncode(data),
+      headers: _trpcHeaders,
+      body: jsonEncode({'json': data}),
     );
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      return _extractResult(jsonDecode(response.body)) ?? {};
     }
     throw Exception('Erro ao criar veículo');
   }
 
   Future<Map<String, dynamic>> updateVehicle(int id, Map<String, dynamic> data) async {
-    final response = await _client.put(
-      Uri.parse('$baseUrl/api/trpc/vehicles.update/$id'),
-      headers: {'Content-Type': 'application/json', ..._authHeaders},
-      body: jsonEncode(data),
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/trpc/vehicles.update'),
+      headers: _trpcHeaders,
+      body: jsonEncode({'json': {'id': id, ...data}}),
     );
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      return _extractResult(jsonDecode(response.body)) ?? {};
     }
     throw Exception('Erro ao atualizar veículo');
+  }
+
+  Future<void> releaseVehicle(int id) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/trpc/vehicles.release'),
+      headers: _trpcHeaders,
+      body: jsonEncode({'json': {'id': id}}),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Erro ao liberar veículo');
+    }
   }
 
   // ============================================================
@@ -107,7 +158,8 @@ class ApiService {
       headers: _authHeaders,
     );
     if (response.statusCode == 200) {
-      return List<Map<String, dynamic>>.from(jsonDecode(response.body));
+      final data = jsonDecode(response.body);
+      return _extractList(data);
     }
     return [];
   }
@@ -115,11 +167,11 @@ class ApiService {
   Future<Map<String, dynamic>> createClient(Map<String, dynamic> data) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/api/trpc/clients.create'),
-      headers: {'Content-Type': 'application/json', ..._authHeaders},
-      body: jsonEncode(data),
+      headers: _trpcHeaders,
+      body: jsonEncode({'json': data}),
     );
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      return _extractResult(jsonDecode(response.body)) ?? {};
     }
     throw Exception('Erro ao criar cliente');
   }
@@ -133,7 +185,8 @@ class ApiService {
       headers: _authHeaders,
     );
     if (response.statusCode == 200) {
-      return List<Map<String, dynamic>>.from(jsonDecode(response.body));
+      final data = jsonDecode(response.body);
+      return _extractList(data);
     }
     return [];
   }
@@ -141,11 +194,11 @@ class ApiService {
   Future<Map<String, dynamic>> createEmployee(Map<String, dynamic> data) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/api/trpc/employees.create'),
-      headers: {'Content-Type': 'application/json', ..._authHeaders},
-      body: jsonEncode(data),
+      headers: _trpcHeaders,
+      body: jsonEncode({'json': data}),
     );
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      return _extractResult(jsonDecode(response.body)) ?? {};
     }
     throw Exception('Erro ao criar funcionário');
   }
@@ -156,13 +209,25 @@ class ApiService {
   Future<Map<String, dynamic>> createService(Map<String, dynamic> data) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/api/trpc/services.create'),
-      headers: {'Content-Type': 'application/json', ..._authHeaders},
-      body: jsonEncode(data),
+      headers: _trpcHeaders,
+      body: jsonEncode({'json': data}),
     );
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      return _extractResult(jsonDecode(response.body)) ?? {};
     }
     throw Exception('Erro ao criar serviço');
+  }
+
+  Future<List<Map<String, dynamic>>> getServices() async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/api/trpc/services.list'),
+      headers: _authHeaders,
+    );
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return _extractList(data);
+    }
+    return [];
   }
 
   // ============================================================
@@ -174,7 +239,8 @@ class ApiService {
       headers: _authHeaders,
     );
     if (response.statusCode == 200) {
-      return List<Map<String, dynamic>>.from(jsonDecode(response.body));
+      final data = jsonDecode(response.body);
+      return _extractList(data);
     }
     return [];
   }
@@ -182,11 +248,11 @@ class ApiService {
   Future<Map<String, dynamic>> createTransaction(Map<String, dynamic> data) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/api/trpc/transactions.create'),
-      headers: {'Content-Type': 'application/json', ..._authHeaders},
-      body: jsonEncode(data),
+      headers: _trpcHeaders,
+      body: jsonEncode({'json': data}),
     );
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      return _extractResult(jsonDecode(response.body)) ?? {};
     }
     throw Exception('Erro ao criar transação');
   }
@@ -200,9 +266,34 @@ class ApiService {
       headers: _authHeaders,
     );
     if (response.statusCode == 200) {
-      return List<Map<String, dynamic>>.from(jsonDecode(response.body));
+      final data = jsonDecode(response.body);
+      return _extractList(data);
     }
     return [];
+  }
+
+  Future<Map<String, dynamic>> createCommission(Map<String, dynamic> data) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/trpc/commissions.create'),
+      headers: _trpcHeaders,
+      body: jsonEncode({'json': data}),
+    );
+    if (response.statusCode == 200) {
+      return _extractResult(jsonDecode(response.body)) ?? {};
+    }
+    throw Exception('Erro ao criar comissão');
+  }
+
+  Future<Map<String, dynamic>> updateCommission(int id, Map<String, dynamic> data) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/trpc/commissions.update'),
+      headers: _trpcHeaders,
+      body: jsonEncode({'json': {'id': id, ...data}}),
+    );
+    if (response.statusCode == 200) {
+      return _extractResult(jsonDecode(response.body)) ?? {};
+    }
+    throw Exception('Erro ao atualizar comissão');
   }
 
   // ============================================================
@@ -214,7 +305,20 @@ class ApiService {
       headers: _authHeaders,
     );
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      final data = jsonDecode(response.body);
+      return _extractResult(data) ?? {};
+    }
+    return {};
+  }
+
+  Future<Map<String, dynamic>> getEmployeeDashboard() async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/api/trpc/dashboard.employeeStats'),
+      headers: _authHeaders,
+    );
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return _extractResult(data) ?? {};
     }
     return {};
   }
@@ -228,9 +332,22 @@ class ApiService {
       headers: _authHeaders,
     );
     if (response.statusCode == 200) {
-      return List<Map<String, dynamic>>.from(jsonDecode(response.body));
+      final data = jsonDecode(response.body);
+      return _extractList(data);
     }
     return [];
+  }
+
+  Future<Map<String, dynamic>> createInventoryItem(Map<String, dynamic> data) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/trpc/inventory.create'),
+      headers: _trpcHeaders,
+      body: jsonEncode({'json': data}),
+    );
+    if (response.statusCode == 200) {
+      return _extractResult(jsonDecode(response.body)) ?? {};
+    }
+    throw Exception('Erro ao criar item de inventário');
   }
 
   // ============================================================
@@ -242,9 +359,22 @@ class ApiService {
       headers: _authHeaders,
     );
     if (response.statusCode == 200) {
-      return List<Map<String, dynamic>>.from(jsonDecode(response.body));
+      final data = jsonDecode(response.body);
+      return _extractList(data);
     }
     return [];
+  }
+
+  Future<Map<String, dynamic>> createAppointment(Map<String, dynamic> data) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/trpc/appointments.create'),
+      headers: _trpcHeaders,
+      body: jsonEncode({'json': data}),
+    );
+    if (response.statusCode == 200) {
+      return _extractResult(jsonDecode(response.body)) ?? {};
+    }
+    throw Exception('Erro ao criar agendamento');
   }
 
   // ============================================================
@@ -256,7 +386,8 @@ class ApiService {
       headers: _authHeaders,
     );
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      final data = jsonDecode(response.body);
+      return _extractResult(data) ?? {};
     }
     return {};
   }
@@ -265,10 +396,18 @@ class ApiService {
   // Helpers
   // ============================================================
   Map<String, String> get _authHeaders {
-    return {
+    final headers = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
+    if (_sessionToken != null) {
+      headers['Authorization'] = 'Bearer $_sessionToken';
+    }
+    return headers;
+  }
+
+  Map<String, String> get _trpcHeaders {
+    return _authHeaders;
   }
 
   void dispose() {

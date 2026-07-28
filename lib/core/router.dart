@@ -33,12 +33,17 @@ class AppRouter {
     navigatorKey: navigatorKey,
     initialLocation: '/login',
     redirect: (context, state) {
-      // A validação de auth será feita pelos providers
+      // Auth validation is handled by login screen navigation
+      // This avoids BuildContext issues with Riverpod in GoRouter
       return null;
     },
     routes: [
       GoRoute(
         path: '/',
+        builder: (context, state) => const HomeScreen(),
+      ),
+      GoRoute(
+        path: '/home',
         builder: (context, state) => const HomeScreen(),
       ),
       GoRoute(

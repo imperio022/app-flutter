@@ -27,22 +27,38 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     await ref.read(authProvider).login(
-      _usernameController.text,
-      _passwordController.text,
+      _usernameController.text.trim(),
+      _passwordController.text.trim(),
     );
 
     final auth = ref.read(authProvider);
     if (!mounted) return;
 
     if (auth.error != null) {
+      String errorMessage = auth.error!;
+      // Clean up error message
+      if (errorMessage.contains('Exception: ')) {
+        errorMessage = errorMessage.replaceAll('Exception: ', '');
+      }
+      if (errorMessage.contains('Usuário ou senha inválidos')) {
+        errorMessage = 'Usuário ou senha inválidos';
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(auth.error!),
-          backgroundColor: Colors.red,
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Expanded(child: Text(errorMessage)),
+            ],
+          ),
+          backgroundColor: const Color(0xFFE31837),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       );
     } else if (auth.isAuthenticated) {
-      context.go('/dashboard');
+      context.go('/home');
     }
   }
 
@@ -70,22 +86,43 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Logo
+                  // Logo Image
                   Container(
-                    width: 100,
-                    height: 100,
+                    width: 140,
+                    height: 140,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: const Color(0xFFE31837).withOpacity(0.15),
-                      border: Border.all(
-                        color: const Color(0xFFE31837),
-                        width: 2,
-                      ),
+                      color: const Color(0xFFE31837).withOpacity(0.1),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFE31837).withOpacity(0.3),
+                          blurRadius: 20,
+                          spreadRadius: 2,
+                        ),
+                      ],
                     ),
-                    child: const Icon(
-                      Icons.car_rental,
-                      size: 50,
-                      color: Color(0xFFE31837),
+                    child: ClipOval(
+                      child: Image.asset(
+                        'assets/images/logo.png',
+                        width: 140,
+                        height: 140,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: const Color(0xFFE31837).withOpacity(0.15),
+                            border: Border.all(
+                              color: const Color(0xFFE31837),
+                              width: 2,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.car_rental,
+                            size: 50,
+                            color: Color(0xFFE31837),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -97,7 +134,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
-                      letterSpacing: 2,
+                      letterSpacing: 3,
+                      shadows: [
+                        Shadow(
+                          color: const Color(0xFFE31837).withOpacity(0.5),
+                          blurRadius: 10,
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -106,6 +149,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     style: TextStyle(
                       fontSize: 14,
                       color: Colors.white.withOpacity(0.6),
+                      letterSpacing: 1,
                     ),
                   ),
                   const SizedBox(height: 48),
@@ -121,7 +165,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           decoration: InputDecoration(
                             hintText: 'Usuário',
                             hintStyle: TextStyle(color: Colors.white.withOpacity(0.4)),
-                            prefixIcon: const Icon(Icons.person, color: Color(0xFFE31837)),
+                            prefixIcon: const Icon(Icons.person_outline, color: Color(0xFFE31837)),
                             filled: true,
                             fillColor: Colors.white.withOpacity(0.05),
                             border: OutlineInputBorder(
@@ -152,7 +196,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           decoration: InputDecoration(
                             hintText: 'Senha',
                             hintStyle: TextStyle(color: Colors.white.withOpacity(0.4)),
-                            prefixIcon: const Icon(Icons.lock, color: Color(0xFFE31837)),
+                            prefixIcon: const Icon(Icons.lock_outline, color: Color(0xFFE31837)),
                             suffixIcon: IconButton(
                               icon: Icon(
                                 _obscurePassword ? Icons.visibility_off : Icons.visibility,
@@ -198,6 +242,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               elevation: 4,
+                              shadowColor: const Color(0xFFE31837).withOpacity(0.5),
                             ),
                             child: auth.isLoading
                                 ? const SizedBox(
@@ -213,7 +258,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                     style: TextStyle(
                                       fontSize: 16,
                                       fontWeight: FontWeight.bold,
-                                      letterSpacing: 2,
+                                      letterSpacing: 3,
                                     ),
                                   ),
                           ),
@@ -224,7 +269,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
                   const SizedBox(height: 32),
                   Text(
-                    'v1.0.0 • Império 022',
+                    'v1.0.1 • Império 022',
                     style: TextStyle(
                       fontSize: 12,
                       color: Colors.white.withOpacity(0.3),

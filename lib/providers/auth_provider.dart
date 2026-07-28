@@ -23,7 +23,8 @@ class AuthNotifier extends ChangeNotifier {
 
     try {
       final data = await _api.login(username, password);
-      _user = AuthUser.fromJson(data['data'] ?? data);
+      // tRPC returns data directly in the result field
+      _user = AuthUser.fromJson(data);
       _isLoading = false;
       notifyListeners();
     } catch (e) {
@@ -45,8 +46,8 @@ class AuthNotifier extends ChangeNotifier {
 
     try {
       final data = await _api.getMe();
-      if (data != null && data['data'] != null) {
-        _user = AuthUser.fromJson(data['data']);
+      if (data != null) {
+        _user = AuthUser.fromJson(data);
       } else {
         _user = null;
       }

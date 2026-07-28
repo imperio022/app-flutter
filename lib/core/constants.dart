@@ -3,9 +3,7 @@ import 'package:flutter/material.dart';
 /// Constantes globais do Império 022
 class AppConstants {
   // API
-  static const String baseUrl = 'https://imperio022-app.onrender.com';
-  // Substituir pela URL real do backend quando estiver disponível
-  // static const String baseUrl = 'https://seu-backend.com';
+  static const String baseUrl = 'https://imperioapp-sypfbmxu.manus.space';
 
   // Colors
   static const Color primaryColor = Color(0xFFE31837);
