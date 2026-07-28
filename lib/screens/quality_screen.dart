@@ -13,7 +13,7 @@ class QualityScreen extends ConsumerWidget {
       body: Container(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [AppConstants.backgroundColor, AppConstants.surfaceColor])), child: SingleChildScrollView(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Text('CHECKLIST DE QUALIDADE', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppConstants.primaryColor, letterSpacing: 1)),
         const SizedBox(height: 16),
-        _QualityItem(title: 'Exterior', icon: Icons.car_wash, status: 'pending'),
+        _QualityItem(title: 'Exterior', icon: Icons.local_car_wash, status: 'pending'),
         _QualityItem(title: 'Interior', icon: Icons.chair, status: 'pending'),
         _QualityItem(title: 'Rodas', icon: Icons.circle, status: 'pending'),
         _QualityItem(title: 'Motor', icon: Icons.settings, status: 'skip'),

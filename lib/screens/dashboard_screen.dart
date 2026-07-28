@@ -128,7 +128,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       child: _StatCard(
                         title: 'Serviços Hoje',
                         value: stats?.servicesCompleted.toString() ?? '0',
-                        icon: Icons.car_wash,
+                        icon: Icons.local_car_wash,
                         color: Colors.orange,
                       ),
                     ),

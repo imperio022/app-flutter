@@ -1,5 +1,6 @@
-/// Constantes globais do Império 022
+import 'package:flutter/material.dart';
 
+/// Constantes globais do Império 022
 class AppConstants {
   // API
   static const String baseUrl = 'https://imperio022-app.onrender.com';

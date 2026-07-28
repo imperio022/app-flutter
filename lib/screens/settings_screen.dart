@@ -21,7 +21,7 @@ class SettingsScreen extends ConsumerWidget {
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(auth.user?.name ?? 'Usuário', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)), Text(auth.user?.role ?? 'employee', style: TextStyle(color: AppConstants.primaryColor, fontSize: 12))])),
         ])),
         const SizedBox(height: 16),
-        _SettingsItem(icon: Icons.person_edit, title: 'Editar Perfil', onTap: () {}),
+        _SettingsItem(icon: Icons.person, title: 'Editar Perfil', onTap: () {}),
         _SettingsItem(icon: Icons.notifications, title: 'Notificações', onTap: () {}),
         _SettingsItem(icon: Icons.cloud, title: 'Sincronização', onTap: () => context.push('/offline')),
         _SettingsItem(icon: Icons.info, title: 'Sobre o App', onTap: () {}),
