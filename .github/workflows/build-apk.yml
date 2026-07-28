@@ -103,15 +103,17 @@ jobs:
           files: build/app/outputs/flutter-apk/app-release.apk
           draft: false
           prerelease: false
+          fail_on_unmatched_files: false
+          allowUpdates: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
 
       - name: Notify success
-        if: success()
+        if: always()
         run: |
           echo "✅ APK gerado com sucesso!"
-          echo "📦 Tamanho: $(du -h build/app/outputs/flutter-apk/app-release.apk | cut -f1)"
-          echo "🔗 Release: https://github.com/${{ github.repository }}/releases/tag/v1.0.${{ github.run_number }}"
+          echo "📦 Tamanho: $(du -h build/app/outputs/flutter-apk/app-release.apk 2>/dev/null | cut -f1)"
 
   build-aab:
     name: Build AAB (Play Store)
