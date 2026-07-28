@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../core/constants.dart';
 import '../providers/data_provider.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 
 class EntryScreen extends ConsumerStatefulWidget {
   const EntryScreen({super.key});
