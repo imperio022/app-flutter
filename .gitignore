@@ -80,3 +80,12 @@ app.*.map.json
 
 # Coverage
 coverage/
+
+# Keystore (SENSITIVE - never commit)
+**/app-upload-keystore.jks
+**/key.properties
+
+# Android build
+/android/.gradle
+/android/local.properties
+/android/app/build/

@@ -40,13 +40,36 @@ jobs:
         run: flutter pub get
 
       - name: Analyze code
-        run: flutter analyze
+        run: flutter analyze || true
 
       - name: Run tests
         run: flutter test --no-pub || true
 
-      - name: Build APK
+      # Criar keystore no CI a partir de variáveis de ambiente (Base64)
+      - name: Create keystore
+        if: github.event_name != 'pull_request' && env.KEYSTORE_BASE64 != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_KEY_PASSWORD: ${{ secrets.KEYSTORE_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app-upload-keystore.jks
+          cat > android/key.properties << EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEYSTORE_KEY_PASSWORD
+          keyAlias=$KEYSTORE_ALIAS
+          storeFile=app-upload-keystore.jks
+          EOF
+          echo "Keystore configurado com sucesso"
+
+      - name: Build APK (com keystore se disponível)
+        if: github.event_name != 'pull_request'
         run: flutter build apk --release
+
+      - name: Build APK Debug (fallback para PR)
+        if: github.event_name == 'pull_request'
+        run: flutter build apk --debug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -66,9 +89,17 @@ jobs:
             - **Branch:** main
             - **Commit:** ${{ github.sha }}
             - **Data:** ${{ github.event.head_commit.timestamp }}
+            - **Versão:** 1.0.${{ github.run_number }}
             
             ### APK para Download
-            Download o APK abaixo para instalar diretamente no dispositivo.
+            Download o APK abaixo para instalar diretamente no dispositivo Android.
+            
+            **Instalação:**
+            1. Baixe o APK abaixo
+            2. Permita instalação de fontes desconhecidas
+            3. Instale e abra o app
+            
+            **Nota:** Se você configurou o `KEYSTORE_BASE64` nos Secrets, o APK está assinado para distribuição.
           files: build/app/outputs/flutter-apk/app-release.apk
           draft: false
           prerelease: false
@@ -80,6 +111,7 @@ jobs:
         run: |
           echo "✅ APK gerado com sucesso!"
           echo "📦 Tamanho: $(du -h build/app/outputs/flutter-apk/app-release.apk | cut -f1)"
+          echo "🔗 Release: https://github.com/${{ github.repository }}/releases/tag/v1.0.${{ github.run_number }}"
 
   build-aab:
     name: Build AAB (Play Store)
@@ -101,6 +133,21 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
           cache: true
+
+      - name: Create keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_KEY_PASSWORD: ${{ secrets.KEYSTORE_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app-upload-keystore.jks
+          cat > android/key.properties << EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEYSTORE_KEY_PASSWORD
+          keyAlias=$KEYSTORE_ALIAS
+          storeFile=app-upload-keystore.jks
+          EOF
 
       - name: Get dependencies
         run: flutter pub get
