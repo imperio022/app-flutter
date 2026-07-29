@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../core/constants.dart';
+import '../core/api_service.dart';
 import '../providers/data_provider.dart';
 
 class ExitScreen extends ConsumerStatefulWidget {
@@ -12,13 +13,16 @@ class ExitScreen extends ConsumerStatefulWidget {
 }
 
 class _ExitScreenState extends ConsumerState<ExitScreen> {
-  String _selectedVehicle = '';
+  int? _selectedVehicleId;
   String _paymentMethod = 'pix'; // 'pix' or 'cash'
-  String _selectedService = '';
   double _totalValue = 0;
+  List<Map<String, dynamic>> _services = [];
+  bool _isLoading = false;
   bool _generateReceipt = true;
   bool _requestEvaluation = true;
   bool _sendWhatsApp = true;
+
+  final ApiService _api = ApiService();
 
   @override
   void initState() {
@@ -26,33 +30,92 @@ class _ExitScreenState extends ConsumerState<ExitScreen> {
     Future.microtask(() => ref.read(dataProvider).loadVehiclesPatio());
   }
 
+  Future<void> _onVehicleSelected(int vehicleId) async {
+    setState(() {
+      _selectedVehicleId = vehicleId;
+      _isLoading = true;
+    });
+
+    try {
+      // Buscar serviços do veículo
+      final response = await _api.getServices(vehicleId);
+      final services = List<Map<String, dynamic>>.from(response);
+      double total = 0;
+      for (final s in services) {
+        total += double.tryParse(s['value']?.toString() ?? '0') ?? 0;
+      }
+      setState(() {
+        _services = services;
+        _totalValue = total;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _handleExit() async {
-    if (_selectedVehicle.isEmpty) {
+    if (_selectedVehicleId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Selecione um veículo')),
       );
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Saída registrada com sucesso!'),
-        backgroundColor: Colors.green,
-      ),
-    );
-    context.go('/dashboard');
+    setState(() => _isLoading = true);
+
+    try {
+      final data = ref.read(dataProvider);
+
+      // 1. Atualizar status do veículo para completed com exitDate
+      await data.updateVehicle(_selectedVehicleId!, {
+        'status': 'completed',
+        'exitDate': DateTime.now().toIso8601String(),
+      });
+
+      // 2. Criar transação de receita
+      await data.createTransaction({
+        'type': 'income',
+        'method': _paymentMethod,
+        'description': 'Saída - ${_paymentMethod.toUpperCase()}',
+        'amount': _totalValue.toStringAsFixed(2),
+        'vehicleId': _selectedVehicleId,
+      });
+
+      // 3. Atualizar comissões para "paid" (se aplicável)
+      // O backend já gerencia isso automaticamente
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Saída registrada com sucesso!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        context.go('/dashboard');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao registrar saída: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final data = ref.watch(dataProvider);
+    final vehicles = data.vehiclesPatio;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Saída'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.go('/'),
+          onPressed: () => context.go('/dashboard'),
         ),
       ),
       body: Container(
@@ -71,30 +134,120 @@ class _ExitScreenState extends ConsumerState<ExitScreen> {
               // Vehicle Selection
               Text('VEÍCULO', style: _sectionTitleStyle),
               const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                decoration: BoxDecoration(
-                  color: AppConstants.surfaceColor,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: _selectedVehicle.isEmpty ? null : _selectedVehicle,
-                    hint: const Text('Selecione o veículo', style: TextStyle(color: Colors.white54)),
-                    dropdownColor: AppConstants.surfaceColor,
-                    isExpanded: true,
-                    style: const TextStyle(color: Colors.white),
-                    icon: const Icon(Icons.arrow_drop_down, color: Colors.white),
-                    onChanged: (value) => setState(() => _selectedVehicle = value ?? ''),
-                    items: data.vehiclesPatio.map((v) {
-                      return DropdownMenuItem(
-                        value: v.id.toString(),
-                        child: Text('${v.plate.toUpperCase()} - ${v.clientName ?? "Sem cliente"}'),
-                      );
-                    }).toList(),
+              if (vehicles.isEmpty)
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: AppConstants.surfaceColor,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Text(
+                    'Nenhum veículo no pátio',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppConstants.surfaceColor,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<int>(
+                      value: _selectedVehicleId,
+                      hint: const Text('Selecione o veículo', style: TextStyle(color: Colors.white54)),
+                      dropdownColor: AppConstants.surfaceColor,
+                      isExpanded: true,
+                      style: const TextStyle(color: Colors.white),
+                      icon: const Icon(Icons.arrow_drop_down, color: Colors.white),
+                      onChanged: _isLoading ? null : (value) {
+                        if (value != null) _onVehicleSelected(value);
+                      },
+                      items: vehicles.map((v) {
+                        return DropdownMenuItem<int>(
+                          value: v.id,
+                          child: Text('${v.plate.toUpperCase()} - ${v.clientName ?? "Sem cliente"}'),
+                        );
+                      }).toList(),
+                    ),
                   ),
                 ),
-              ),
+
+              // Serviços do veículo
+              if (_selectedVehicleId != null) ...[
+                const SizedBox(height: 20),
+                Text('SERVIÇOS', style: _sectionTitleStyle),
+                const SizedBox(height: 12),
+                if (_isLoading)
+                  const Center(child: CircularProgressIndicator())
+                else if (_services.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: AppConstants.surfaceColor,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Text(
+                      'Nenhum serviço registrado',
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  )
+                else
+                  ..._services.map((s) => Container(
+                    margin: const EdgeInsets.only(bottom: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppConstants.surfaceColor,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            s['description']?.toString() ?? 'Serviço',
+                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                          ),
+                        ),
+                        Text(
+                          'R\$ ${double.tryParse(s['value']?.toString() ?? '0')?.toStringAsFixed(2) ?? '0.00'}',
+                          style: const TextStyle(color: Colors.green, fontSize: 13, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  )),
+
+                const SizedBox(height: 20),
+                // Total
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: AppConstants.primaryColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppConstants.primaryColor.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text(
+                        'TOTAL: ',
+                        style: TextStyle(fontSize: 18, color: Colors.white70),
+                      ),
+                      Text(
+                        'R\$ ${_totalValue.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 36,
+                          fontWeight: FontWeight.bold,
+                          color: AppConstants.primaryColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
 
               const SizedBox(height: 20),
               Text('PAGAMENTO', style: _sectionTitleStyle),
@@ -124,31 +277,6 @@ class _ExitScreenState extends ConsumerState<ExitScreen> {
               ),
 
               const SizedBox(height: 20),
-              Text('VALOR', style: _sectionTitleStyle),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: AppConstants.primaryColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppConstants.primaryColor.withOpacity(0.3)),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'R\$ ${_totalValue.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        fontSize: 36,
-                        fontWeight: FontWeight.bold,
-                        color: AppConstants.primaryColor,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 20),
               Text('OPÇÕES DE SAÍDA', style: _sectionTitleStyle),
               const SizedBox(height: 12),
               _OptionSwitch(
@@ -171,15 +299,17 @@ class _ExitScreenState extends ConsumerState<ExitScreen> {
               SizedBox(
                 height: 54,
                 child: ElevatedButton(
-                  onPressed: _handleExit,
+                  onPressed: _isLoading ? null : _handleExit,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
-                  child: const Text(
-                    'REGISTRAR SAÍDA',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1),
-                  ),
+                  child: _isLoading
+                      ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Text(
+                          'REGISTRAR SAÍDA',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1),
+                        ),
                 ),
               ),
             ],

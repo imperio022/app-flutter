@@ -4,6 +4,16 @@ import 'package:go_router/go_router.dart';
 import '../core/constants.dart';
 import '../providers/data_provider.dart';
 
+// ── Preço base por tipo de veículo (mesmo do backend) ──
+const Map<String, double> basePrices = {
+  'moto': 35,
+  'hatch': 60,
+  'sedan': 70,
+  'suv': 100,
+  'truck': 120,
+  'other': 80,
+};
+
 class EntryScreen extends ConsumerStatefulWidget {
   const EntryScreen({super.key});
 
@@ -17,10 +27,14 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
   final _colorController = TextEditingController();
   final _clientNameController = TextEditingController();
   final _clientPhoneController = TextEditingController();
+  final _editValueController = TextEditingController();
+
   String _selectedType = 'sedan';
   String _selectedService = 'Lavagem Simples';
   double _serviceValue = 70.0;
-  bool _isScanning = false;
+  int _selectedEmployeeId = 0;
+  bool _isEditingPrice = false;
+  bool _isLoading = false;
 
   final List<String> _vehicleTypes = ['moto', 'hatch', 'sedan', 'suv', 'truck', 'other'];
   final List<String> _services = [
@@ -37,6 +51,8 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
   void initState() {
     super.initState();
     _updatePrice();
+    // Carregar funcionários na inicialização
+    Future.microtask(() => ref.read(dataProvider).loadEmployees());
   }
 
   @override
@@ -46,45 +62,95 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
     _colorController.dispose();
     _clientNameController.dispose();
     _clientPhoneController.dispose();
+    _editValueController.dispose();
     super.dispose();
   }
 
   void _updatePrice() {
     setState(() {
-      _serviceValue = AppConstants.vehiclePrices[_selectedType] ?? 70.0;
+      _serviceValue = basePrices[_selectedType] ?? 70.0;
     });
   }
 
-  void _openCamera() {
-    setState(() => _isScanning = true);
-    // Mobile scanner will be integrated here
-    // For now, we'll use a simple text input
+  void _startEditPrice() {
+    setState(() {
+      _editValueController.text = _serviceValue.toStringAsFixed(2);
+      _isEditingPrice = true;
+    });
+  }
+
+  void _savePrice() {
+    final val = double.tryParse(_editValueController.text);
+    if (val != null && val >= 0) {
+      setState(() {
+        _serviceValue = val;
+        _isEditingPrice = false;
+      });
+    } else {
+      setState(() => _isEditingPrice = false);
+    }
+  }
+
+  void _cancelEditPrice() {
+    setState(() => _isEditingPrice = false);
   }
 
   Future<void> _handleSubmit() async {
-    if (_plateController.text.isEmpty) {
+    // Validações
+    if (_plateController.text.trim().isEmpty) {
       _showError('Placa é obrigatória');
       return;
     }
-    if (_clientNameController.text.isEmpty) {
+    if (_clientNameController.text.trim().isEmpty) {
       _showError('Nome do cliente é obrigatório');
       return;
     }
+    if (_selectedEmployeeId == 0) {
+      _showError('Selecione um funcionário');
+      return;
+    }
+
+    setState(() => _isLoading = true);
 
     try {
       final data = ref.read(dataProvider);
-      
-      // Create client first if needed
-      if (_clientNameController.text.isNotEmpty) {
-        await data.createVehicle({
-          'plate': _plateController.text.toUpperCase(),
-          'type': _selectedType,
-          'model': _modelController.text,
-          'color': _colorController.text,
-          'clientName': _clientNameController.text,
-          'clientPhone': _clientPhoneController.text,
-          'serviceDescription': _selectedService,
-          'serviceValue': _serviceValue,
+      final employees = ref.read(dataProvider).employees;
+
+      // 1. Criar cliente
+      final clientId = await data.createClient({
+        'name': _clientNameController.text.trim(),
+        'phone': _clientPhoneController.text.trim().isNotEmpty
+            ? _clientPhoneController.text.trim()
+            : '00000000000',
+      });
+
+      // 2. Criar veículo com funcionário responsável
+      final vehicleId = await data.createVehicle({
+        'plate': _plateController.text.trim().toUpperCase(),
+        'type': _selectedType,
+        'model': _modelController.text.trim(),
+        'color': _colorController.text.trim(),
+        'clientId': clientId,
+        'employeeId': _selectedEmployeeId,
+      });
+
+      // 3. Criar serviço
+      await data.createService({
+        'vehicleId': vehicleId,
+        'description': _selectedService,
+        'value': _serviceValue.toStringAsFixed(2),
+        'employeeId': _selectedEmployeeId,
+        'status': 'pending',
+      });
+
+      // 4. Criar comissão (valor fixo = commissionRate do funcionário)
+      final employee = employees.where((e) => e.id == _selectedEmployeeId).firstOrNull;
+      if (employee != null && employee.commissionRate > 0) {
+        await data.createCommission({
+          'employeeId': _selectedEmployeeId,
+          'amount': employee.commissionRate.toStringAsFixed(2),
+          'serviceDescription': '$_selectedService - ${_plateController.text.trim().toUpperCase()}',
+          'vehicleId': vehicleId,
         });
       }
 
@@ -95,12 +161,24 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
             backgroundColor: Colors.green,
           ),
         );
-        context.go('/dashboard');
+        // Reset form
+        _plateController.clear();
+        _modelController.clear();
+        _colorController.clear();
+        _clientNameController.clear();
+        _clientPhoneController.clear();
+        _selectedType = 'sedan';
+        _selectedService = 'Lavagem Simples';
+        _serviceValue = basePrices['sedan']!;
+        _selectedEmployeeId = 0;
+        _updatePrice();
       }
     } catch (e) {
       if (mounted) {
         _showError('Erro ao registrar entrada: $e');
       }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -115,12 +193,15 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final data = ref.watch(dataProvider);
+    final employees = data.employees;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Entrada'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.go('/'),
+          onPressed: () => context.go('/dashboard'),
         ),
       ),
       body: Container(
@@ -139,7 +220,66 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Vehicle Info
+              // ── FUNCIONÁRIO ──
+              Text(
+                'FUNCIONÁRIO *',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: AppConstants.primaryColor,
+                  letterSpacing: 1,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppConstants.surfaceColor,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    value: _selectedEmployeeId == 0 ? null : _selectedEmployeeId,
+                    dropdownColor: AppConstants.surfaceColor,
+                    isExpanded: true,
+                    hint: const Text(
+                      'Selecione seu nome...',
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                    icon: const Icon(Icons.arrow_drop_down, color: Colors.white),
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    onChanged: employees.isEmpty
+                        ? null
+                        : (value) {
+                            setState(() => _selectedEmployeeId = value ?? 0);
+                          },
+                    items: employees
+                        .where((e) => e.isActive == 'active')
+                        .map((emp) {
+                      return DropdownMenuItem<int>(
+                        value: emp.id,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(child: Text(emp.name)),
+                            Text(
+                              'R\$${emp.commissionRate}/serv',
+                              style: TextStyle(
+                                color: Colors.green.withOpacity(0.7),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              // ── DADOS DO VEÍCULO ──
               Text(
                 'DADOS DO VEÍCULO',
                 style: TextStyle(
@@ -157,7 +297,8 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
                   Expanded(
                     child: TextField(
                       controller: _plateController,
-                      style: const TextStyle(color: Colors.white, letterSpacing: 3),
+                      style: const TextStyle(
+                          color: Colors.white, letterSpacing: 3, fontSize: 18),
                       textCapitalization: TextCapitalization.characters,
                       decoration: InputDecoration(
                         hintText: 'PLACA',
@@ -171,18 +312,16 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  GestureDetector(
-                    onTap: _openCamera,
-                    child: Container(
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        color: AppConstants.primaryColor.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppConstants.primaryColor),
-                      ),
-                      child: const Icon(Icons.camera_alt, color: AppConstants.primaryColor),
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: AppConstants.primaryColor.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppConstants.primaryColor),
                     ),
+                    child: const Icon(Icons.camera_alt,
+                        color: AppConstants.primaryColor),
                   ),
                 ],
               ),
@@ -191,11 +330,13 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
               // Vehicle Type
               Text(
                 'Tipo de Veículo',
-                style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12),
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.6), fontSize: 12),
               ),
               const SizedBox(height: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
                   color: AppConstants.surfaceColor,
                   borderRadius: BorderRadius.circular(12),
@@ -205,8 +346,10 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
                     value: _selectedType,
                     dropdownColor: AppConstants.surfaceColor,
                     isExpanded: true,
-                    style: const TextStyle(color: Colors.white),
-                    icon: const Icon(Icons.arrow_drop_down, color: Colors.white),
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.w600),
+                    icon: const Icon(Icons.arrow_drop_down,
+                        color: Colors.white),
                     onChanged: (value) {
                       setState(() => _selectedType = value!);
                       _updatePrice();
@@ -214,13 +357,7 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
                     items: _vehicleTypes.map((type) {
                       return DropdownMenuItem(
                         value: type,
-                        child: Text(
-                          type.toUpperCase(),
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                        child: Text(type.toUpperCase()),
                       );
                     }).toList(),
                   ),
@@ -237,10 +374,12 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
                       style: const TextStyle(color: Colors.white),
                       decoration: InputDecoration(
                         hintText: 'Modelo',
-                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                        hintStyle:
+                            TextStyle(color: Colors.white.withOpacity(0.3)),
                         filled: true,
                         fillColor: AppConstants.surfaceColor,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12)),
                       ),
                     ),
                   ),
@@ -251,10 +390,12 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
                       style: const TextStyle(color: Colors.white),
                       decoration: InputDecoration(
                         hintText: 'Cor',
-                        hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                        hintStyle:
+                            TextStyle(color: Colors.white.withOpacity(0.3)),
                         filled: true,
                         fillColor: AppConstants.surfaceColor,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12)),
                       ),
                     ),
                   ),
@@ -263,7 +404,7 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
 
               const SizedBox(height: 24),
 
-              // Client Info
+              // ── DADOS DO CLIENTE ──
               Text(
                 'DADOS DO CLIENTE',
                 style: TextStyle(
@@ -280,10 +421,12 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
                   hintText: 'Nome do Cliente *',
-                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                  hintStyle:
+                      TextStyle(color: Colors.white.withOpacity(0.3)),
                   filled: true,
                   fillColor: AppConstants.surfaceColor,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
               ),
               const SizedBox(height: 12),
@@ -292,17 +435,19 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
                 style: const TextStyle(color: Colors.white),
                 keyboardType: TextInputType.phone,
                 decoration: InputDecoration(
-                  hintText: 'Telefone',
-                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+                  hintText: 'Telefone *',
+                  hintStyle:
+                      TextStyle(color: Colors.white.withOpacity(0.3)),
                   filled: true,
                   fillColor: AppConstants.surfaceColor,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
               ),
 
               const SizedBox(height: 24),
 
-              // Service
+              // ── SERVIÇO ──
               Text(
                 'SERVIÇO',
                 style: TextStyle(
@@ -314,7 +459,8 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
               ),
               const SizedBox(height: 12),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
                   color: AppConstants.surfaceColor,
                   borderRadius: BorderRadius.circular(12),
@@ -324,15 +470,18 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
                     value: _selectedService,
                     dropdownColor: AppConstants.surfaceColor,
                     isExpanded: true,
-                    style: const TextStyle(color: Colors.white),
-                    icon: const Icon(Icons.arrow_drop_down, color: Colors.white),
+                    style:
+                        const TextStyle(color: Colors.white),
+                    icon: const Icon(Icons.arrow_drop_down,
+                        color: Colors.white),
                     onChanged: (value) {
                       setState(() => _selectedService = value!);
                     },
                     items: _services.map((service) {
                       return DropdownMenuItem(
                         value: service,
-                        child: Text(service, style: TextStyle(color: Colors.white)),
+                        child: Text(service,
+                            style: TextStyle(color: Colors.white)),
                       );
                     }).toList(),
                   ),
@@ -341,57 +490,195 @@ class _EntryScreenState extends ConsumerState<EntryScreen> {
 
               const SizedBox(height: 20),
 
-              // Price Display
+              // ── VALOR COM CANETA DE EDIÇÃO ──
               Container(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: AppConstants.primaryColor.withOpacity(0.1),
+                  color: Colors.green.withOpacity(0.08),
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppConstants.primaryColor.withOpacity(0.3)),
+                  border: Border.all(
+                      color: Colors.green.withOpacity(0.25)),
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: Column(
                   children: [
-                    Text(
-                      'VALOR TOTAL',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.white.withOpacity(0.7),
-                      ),
+                    // Header com label e caneta
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'VALOR A COBRAR',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white.withOpacity(0.5),
+                            letterSpacing: 1,
+                          ),
+                        ),
+                        if (!_isEditingPrice)
+                          GestureDetector(
+                            onTap: _startEditPrice,
+                            child: Container(
+                              width: 34,
+                              height: 34,
+                              decoration: BoxDecoration(
+                                color: Colors.yellow.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.edit,
+                                  size: 18, color: Colors.yellow),
+                            ),
+                          ),
+                      ],
                     ),
-                    Text(
-                      'R\$ ${_serviceValue.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: AppConstants.primaryColor,
+
+                    const SizedBox(height: 10),
+
+                    if (_isEditingPrice)
+                      // ── Modo Edição ──
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _editValueController,
+                              autofocus: true,
+                              keyboardType: TextInputType.numberWithOptions(
+                                  decimal: true),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                              decoration: InputDecoration(
+                                prefixText: 'R\$ ',
+                                prefixStyle: TextStyle(
+                                  color: Colors.green.withOpacity(0.7),
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                filled: true,
+                                fillColor: Colors.black.withOpacity(0.4),
+                                contentPadding:
+                                    const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
+                                border: OutlineInputBorder(
+                                  borderRadius:
+                                      BorderRadius.circular(12),
+                                  borderSide: BorderSide(
+                                      color: Colors.yellow
+                                          .withOpacity(0.5)),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius:
+                                      BorderRadius.circular(12),
+                                  borderSide: BorderSide(
+                                      color: Colors.yellow
+                                          .withOpacity(0.8)),
+                                ),
+                              ),
+                              onSubmitted: (_) => _savePrice(),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: _savePrice,
+                            child: Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                color: Colors.green.withOpacity(0.3),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(Icons.check,
+                                  size: 24, color: Colors.green),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: _cancelEditPrice,
+                            child: Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Icon(Icons.close,
+                                  size: 24,
+                                  color: Colors.white.withOpacity(0.5)),
+                            ),
+                          ),
+                        ],
+                      )
+                    else
+                      // ── Modo Exibição ──
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Preço base: ${_selectedType}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white.withOpacity(0.3),
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Ajuste conforme o estado do carro',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white.withOpacity(0.25),
+                                ),
+                              ),
+                            ],
+                          ),
+                          Text(
+                            'R\$ ${_serviceValue.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              fontSize: 32,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
                   ],
                 ),
               ),
 
               const SizedBox(height: 24),
 
-              // Submit Button
+              // ── BOTÃO SUBMIT ──
               SizedBox(
                 height: 54,
                 child: ElevatedButton(
-                  onPressed: _handleSubmit,
+                  onPressed: _isLoading ? null : _handleSubmit,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppConstants.primaryColor,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: const Text(
-                    'REGISTRAR ENTRADA',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1,
-                    ),
-                  ),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text(
+                          'REGISTRAR ENTRADA',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1,
+                          ),
+                        ),
                 ),
               ),
             ],

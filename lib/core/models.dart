@@ -289,38 +289,64 @@ class InventoryItem {
 // ============================================================
 class Appointment {
   final int id;
-  final int clientId;
+  final int? clientId;
   final String clientName;
-  final String plate;
+  final String clientPhone;
+  final String? vehiclePlate;
+  final String? vehicleType;
   final String serviceType;
-  final String date;
-  final String time;
+  final String appointmentDate; // datetime completo
   final String status; // 'pending', 'confirmed', 'completed', 'cancelled'
   final String? notes;
+  final int? createdBy;
 
   Appointment({
     required this.id,
-    required this.clientId,
+    this.clientId,
     required this.clientName,
-    required this.plate,
+    required this.clientPhone,
+    this.vehiclePlate,
+    this.vehicleType,
     required this.serviceType,
-    required this.date,
-    required this.time,
+    required this.appointmentDate,
     required this.status,
     this.notes,
+    this.createdBy,
   });
+
+  /// Retorna a data formatada (ex: "30/07/2026")
+  String get dateFormatted {
+    try {
+      final dt = DateTime.parse(appointmentDate);
+      return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
+    } catch (_) {
+      return appointmentDate;
+    }
+  }
+
+  /// Retorna a hora formatada (ex: "10:00")
+  String get timeFormatted {
+    try {
+      final dt = DateTime.parse(appointmentDate);
+      return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return '';
+    }
+  }
 
   factory Appointment.fromJson(Map<String, dynamic> json) {
     return Appointment(
       id: json['id'] ?? 0,
-      clientId: json['clientId'] ?? 0,
+      clientId: json['clientId'],
       clientName: json['clientName'] ?? '',
-      plate: json['plate'] ?? '',
+      clientPhone: json['clientPhone'] ?? '',
+      vehiclePlate: json['vehiclePlate'],
+      vehicleType: json['vehicleType'],
       serviceType: json['serviceType'] ?? '',
-      date: json['date'] ?? '',
-      time: json['time'] ?? '',
+      appointmentDate: json['appointmentDate'] ?? '',
       status: json['status'] ?? 'pending',
       notes: json['notes'],
+      createdBy: json['createdBy'],
     );
   }
 }
@@ -539,11 +565,17 @@ class DashboardStats {
   });
 
   factory DashboardStats.fromJson(Map<String, dynamic> json) {
+    // Mapeamento dos campos do backend tRPC para o modelo do app
+    // Backend retorna: {patioCount, completedCount, vehicleCounts, cash, pix, toReceive, expenses, pendingCommissions}
+    final cash = double.tryParse(json['cash']?.toString() ?? '0') ?? 0;
+    final pix = double.tryParse(json['pix']?.toString() ?? '0') ?? 0;
+    final revenueToday = cash + pix;
+
     return DashboardStats(
-      totalVehiclesPatio: json['totalVehiclesPatio'] ?? 0,
-      totalRevenueToday: double.tryParse(json['totalRevenueToday']?.toString() ?? '0') ?? 0,
-      servicesCompleted: json['servicesCompleted'] ?? 0,
-      monthlyRevenue: double.tryParse(json['monthlyRevenue']?.toString() ?? '0') ?? 0,
+      totalVehiclesPatio: json['patioCount'] ?? 0,
+      totalRevenueToday: revenueToday,
+      servicesCompleted: json['completedCount'] ?? 0,
+      monthlyRevenue: revenueToday, // Usar receita do dia como proxy mensal (backend atual não separa)
       clientsCount: json['clientsCount'] ?? 0,
       employeesCount: json['employeesCount'] ?? 0,
     );
