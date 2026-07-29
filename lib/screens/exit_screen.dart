@@ -68,9 +68,10 @@ class _ExitScreenState extends ConsumerState<ExitScreen> {
       final data = ref.read(dataProvider);
 
       // 1. Atualizar status do veículo para completed com exitDate
+      // Nota: z.date() no tRPC espera timestamp Unix em milissegundos
       await data.updateVehicle(_selectedVehicleId!, {
         'status': 'completed',
-        'exitDate': DateTime.now().toIso8601String(),
+        'exitDate': DateTime.now().millisecondsSinceEpoch,
       });
 
       // 2. Criar transação de receita
